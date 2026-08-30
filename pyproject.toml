@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gopro-multi-rtmp"
+version = "1.0.0"
+description = "Labs+COHN multi-camera GoPro HERO13 RTMP capture with on-camera SD backup"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = []
+
+[project.scripts]
+gopro-multi-rtmp = "gopro_multi_rtmp.cli:main"
+
+[project.optional-dependencies]
+dev = ["mypy>=1.10"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
