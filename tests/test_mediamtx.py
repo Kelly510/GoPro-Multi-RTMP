@@ -28,6 +28,7 @@ class MediaMTXTests(unittest.TestCase):
             self.config.server.api_port,
             self.config.cameras,
             self.config.server,
+            self.config.preview,
         )
         self.assertIn('"live/cam_a":', text)
         self.assertIn('"live/cam_b":', text)
@@ -36,6 +37,36 @@ class MediaMTXTests(unittest.TestCase):
         self.assertIn("streams/%path", text)
         self.assertIn("recordFormat: fmp4", text)
         self.assertIn("moq: false", text)
+        self.assertIn("hls: false", text)
+
+    def test_enables_loopback_hls_without_disabling_recording(self) -> None:
+        config_path = self.root / "preview.toml"
+        config_path.write_text(
+            VALID.replace(
+                "[timeouts]",
+                "[preview]\n"
+                "enabled = true\n"
+                'bind_host = "127.0.0.1"\n'
+                "hls_port = 8888\n"
+                "auto_open = true\n"
+                "[timeouts]",
+            ),
+            encoding="utf-8",
+        )
+        config = load_config(config_path)
+        text = render_mediamtx_config(
+            self.root / "session",
+            config.network.rtmp_port,
+            config.server.api_port,
+            config.cameras,
+            config.server,
+            config.preview,
+        )
+        self.assertIn("hls: true", text)
+        self.assertIn('hlsAddress: "127.0.0.1:8888"', text)
+        self.assertIn("hlsAlwaysRemux: true", text)
+        self.assertIn("hlsVariant: fmp4", text)
+        self.assertEqual(text.count("record: true"), 2)
 
     def test_manifest_never_contains_secret_snapshot(self) -> None:
         manifest = Manifest(
@@ -76,6 +107,7 @@ class MediaMTXTests(unittest.TestCase):
             self.config.server.api_port,
             self.config.cameras,
             self.config.server,
+            self.config.preview,
         )
         with patch("gopro_multi_rtmp.mediamtx.subprocess.Popen", return_value=process):
             with self.assertRaises(MediaMTXError):

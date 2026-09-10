@@ -12,11 +12,11 @@ from .config import AppConfig, ConfigError, resolve_rtmp_host, validate_config
 from .mediamtx import find_mediamtx
 
 
-def _port_available(port: int) -> bool:
+def _port_available(port: int, host: str = "127.0.0.1") -> bool:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("127.0.0.1", port))
+        sock.bind((host, port))
         return True
     except OSError:
         return False
@@ -76,6 +76,16 @@ def run_doctor(config: AppConfig) -> tuple[bool, list[dict[str, Any]]]:
         api_port_available,
         "可用" if api_port_available else "已被其他进程占用或当前终端无监听权限",
     )
+    if config.preview.enabled:
+        hls_port_available = _port_available(
+            config.preview.hls_port,
+            config.preview.bind_host,
+        )
+        add(
+            f"HLS {config.preview.bind_host}:{config.preview.hls_port}",
+            hls_port_available,
+            "可用" if hls_port_available else "地址不可绑定、端口被占用或当前终端无监听权限",
+        )
     add(
         "采集网络检查",
         True,

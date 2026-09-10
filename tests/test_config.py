@@ -78,6 +78,61 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn("cohn_password", rendered)
         self.assertNotIn("cohn-secret-a", repr(config.cameras[0]))
 
+    def test_preview_defaults_off_and_is_safe_for_local_use(self) -> None:
+        config = load_config(self.write_config(VALID))
+        self.assertFalse(config.preview.enabled)
+        self.assertEqual(config.preview.bind_host, "127.0.0.1")
+        self.assertEqual(config.preview.hls_port, 8888)
+        self.assertTrue(config.preview.auto_open)
+
+    def test_preview_configuration_is_exported_without_secrets(self) -> None:
+        text = VALID.replace(
+            "[timeouts]",
+            "[preview]\n"
+            "enabled = true\n"
+            'bind_host = "192.168.10.5"\n'
+            "hls_port = 8888\n"
+            "auto_open = false\n"
+            "[timeouts]",
+        )
+        config = load_config(self.write_config(text))
+        snapshot = public_config(config, "192.168.10.5")
+        self.assertEqual(
+            snapshot["preview"],
+            {
+                "enabled": True,
+                "protocol": "hls",
+                "bind_host": "192.168.10.5",
+                "hls_port": 8888,
+                "auto_open": False,
+            },
+        )
+
+    def test_preview_rejects_unsafe_host_and_conflicting_port(self) -> None:
+        for unsafe in ("0.0.0.0", "8.8.8.8", "localhost", "::1"):
+            with self.subTest(unsafe=unsafe):
+                text = VALID.replace(
+                    "[timeouts]",
+                    "[preview]\n"
+                    "enabled = true\n"
+                    f'bind_host = "{unsafe}"\n'
+                    "hls_port = 8888\n"
+                    "[timeouts]",
+                )
+                with self.assertRaisesRegex(ConfigError, "preview.bind_host"):
+                    load_config(self.write_config(text))
+
+        conflict = VALID.replace(
+            "[timeouts]",
+            "[preview]\n"
+            "enabled = true\n"
+            'bind_host = "127.0.0.1"\n'
+            "hls_port = 1935\n"
+            "[timeouts]",
+        )
+        with self.assertRaisesRegex(ConfigError, "HLS 预览端口"):
+            load_config(self.write_config(conflict))
+
     def test_selected_complete_camera_works_while_other_is_incomplete(self) -> None:
         incomplete = VALID.replace(
             'cohn_ip = "192.168.18.179"\ncohn_username = "gopro"\ncohn_password = "cohn-secret-b"\n',
@@ -122,6 +177,15 @@ class ConfigTests(unittest.TestCase):
                     VALID.replace(
                         'rtmp_port = 1935',
                         'rtmp_port = 1935\nssid = "unexpected"',
+                    )
+                )
+            )
+        with self.assertRaisesRegex(ConfigError, r"\[preview\].*codec"):
+            load_config(
+                self.write_config(
+                    VALID.replace(
+                        "[timeouts]",
+                        "[preview]\ncodec = \"h264\"\n[timeouts]",
                     )
                 )
             )

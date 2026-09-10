@@ -85,6 +85,7 @@ def run_synthetic_test(config: AppConfig, duration: float = 5.0) -> Path:
         config.server.api_port,
         config.cameras,
         config.server,
+        config.preview,
     )
     publishers: list[subprocess.Popen[Any]] = []
     logs: list[Any] = []

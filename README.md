@@ -1,6 +1,6 @@
 # HERO13 多相机无线同步采集
 
-这个项目用于在同一局域网中控制任意数量的 GoPro HERO13 Black：相机通过 GoPro Labs 和 COHN 接收控制命令，将 RTMP 视频流发送到 Mac 上的 MediaMTX，并可同时在各自的 SD 卡保存副本。
+这个项目用于在同一局域网中控制任意数量的 GoPro HERO13 Black：相机通过 GoPro Labs 和 COHN 接收控制命令，将 RTMP 视频流发送到 Mac 上的 MediaMTX，可同时显示多机实时画面、在 Mac 上录制，并在各自的 SD 卡保存副本。
 
 日常录制时，相机只需保持开机、已经连接采集 Wi-Fi，并停留在普通预览界面。主机可以一条命令同时启动或停止所选相机，不需要再次进入“等待配对”界面。
 
@@ -146,6 +146,7 @@ chmod 600 config.toml
 ```
 
 当前配置格式为 `schema_version = 2`。程序会拒绝未知字段，避免拼写错误被静默忽略。
+`[preview]` 是可选配置段，旧配置不添加它也能继续使用，且默认不启动浏览器预览。
 
 完整示例：
 
@@ -169,6 +170,12 @@ api_port = 9997
 record_part_duration = "1s"
 record_segment_duration = "1h"
 sha256 = false
+
+[preview]
+enabled = false              # true 时每次录制都启用浏览器多机预览
+bind_host = "127.0.0.1"      # 默认只允许本机浏览器访问
+hls_port = 8888
+auto_open = true             # 自动打开生成的多机预览页面
 
 [timeouts]
 cohn_request_seconds = 5
@@ -200,6 +207,10 @@ cohn_password = "另一台相机生成的 COHN 密码"
 - `encode_to_sd`：为 `true` 时，启动命令要求相机同步保存 SD 副本。
 - `require_audio`：为 `true` 时，本机文件没有音频轨会使会话失败；程序不会判断音频内容是否静音。
 - `sha256`：为 `true` 时，为本机录制文件计算 SHA-256。
+- `preview.enabled`：启用 MediaMTX fMP4 HLS，并生成多机预览页面；默认关闭。
+- `preview.bind_host`：HLS 监听地址；默认 `127.0.0.1`，不会向局域网开放。需要在其他设备查看时，显式填写 Mac 的私有局域网 IPv4。
+- `preview.hls_port`：HLS 预览端口，不能与 RTMP/API 端口相同。
+- `preview.auto_open`：发布流全部上线后，是否自动用默认浏览器打开预览页面。
 - `alias`：主机使用的相机名称。
 - `serial`：相机完整序列号。
 - `stream_key`：该相机独占的 RTMP 路径名。
@@ -340,6 +351,39 @@ Labs 没有定义 JOIN 字符串中冒号、双引号和控制字符的转义规
 
 无人值守采集应优先使用 `--duration`。有限时长会给每台相机附加相机侧自停保险；交互模式无法预先确定保险时长，主机异常退出后相机可能继续录制。
 
+### 实时预览并录制
+
+不修改配置文件，临时启用本机浏览器多机预览：
+
+```bash
+.venv/bin/gopro-multi-rtmp --config config.toml record \
+  --camera cam_a --camera cam_b \
+  --duration 30 --label stereo --display
+```
+
+所有 RTMP publisher 上线后，程序会生成并打开一个响应式多机页面。页面默认静音，MediaMTX 同时继续把每路流写入本机 MP4；`encode_to_sd = true` 时相机也继续保存 SD 副本。预览客户端不会从 GoPro 获取第二路流。
+
+如果 `[preview] enabled = true`，普通 `record` 命令也会启用预览。需要对某次录制临时关闭时使用：
+
+```bash
+.venv/bin/gopro-multi-rtmp --config config.toml record --no-display
+```
+
+HLS 预览的基础地址为：
+
+```text
+http://127.0.0.1:8888/live/<stream_key>
+```
+
+要求更低延迟时，可以在另一终端直接读取现有 RTMP 路径：
+
+```bash
+ffplay -fflags nobuffer -flags low_delay -framedrop \
+  rtmp://127.0.0.1:1935/live/cam_a
+```
+
+HLS 更适合浏览器多机布局，但延迟通常高于直接 RTMP 监看。它不是硬件级实时或逐帧同步显示。
+
 ## 11. 录制流程和成功条件
 
 每次会话按以下顺序执行：
@@ -351,11 +395,12 @@ Labs 没有定义 JOIN 字符串中冒号、双引号和控制字符的转义规
 5. 记录各相机启动前的 SD `last_captured` 路径。
 6. 用并发屏障发送 Labs 直播命令。1080p 并保留 SD 副本时为 `!GLC`。
 7. 等待全部 RTMP publisher 上线后开始正式计时。
-8. 录制期间每 3 秒发送 keep-alive，并监测所有 RTMP 路径。
-9. 到达时长后发送 Labs `!E`，紧接着发送标准 COHN shutter-stop。
-10. 确认所有 publisher 下线、所有相机停止编码，再关闭 MediaMTX。
-11. 用 ffprobe 验证每个本机 MP4 的视频轨、所需音频轨和最低时长。
-12. `encode_to_sd = true` 时，确认每台相机的 `last_captured` 路径发生变化。
+8. 启用预览时，生成多机页面，并在配置允许时自动打开浏览器。
+9. 录制期间每 3 秒发送 keep-alive，并监测所有 RTMP 路径。
+10. 到达时长后发送 Labs `!E`，紧接着发送标准 COHN shutter-stop。
+11. 确认所有 publisher 下线、所有相机停止编码，再关闭 MediaMTX。
+12. 用 ffprobe 验证每个本机 MP4 的视频轨、所需音频轨和最低时长。
+13. `encode_to_sd = true` 时，确认每台相机的 `last_captured` 路径发生变化。
 
 SD 验证只能证明相机报告了新的媒体路径；程序不会通过网络下载并校验 SD 文件内容。
 
@@ -368,13 +413,15 @@ recordings/<UTC时间>_<label>_<随机后缀>/
 ├── streams/live/<stream_key>/*.mp4
 ├── manifest.json
 ├── logs/mediamtx.log
-└── runtime/mediamtx.yml
+├── runtime/mediamtx.yml
+└── runtime/preview.html      # 启用预览时生成
 ```
 
 - `streams/live/<stream_key>/*.mp4`：本机收到的各路视频。
 - `manifest.json`：会话状态、相机事件、同步观测值、ffprobe 结果和 SD 路径验证。
 - `logs/mediamtx.log`：MediaMTX 运行日志。
 - `runtime/mediamtx.yml`：本次会话生成的服务配置，不含相机密码。
+- `runtime/preview.html`：本次会话的多机 HLS 预览入口；录制结束、MediaMTX 关闭后页面仍在，但实时流不再可用。
 
 本机 MP4 可能包含相机启动预缓冲和编码收尾，文件长度可以略大于请求的采集时长。
 
@@ -447,7 +494,15 @@ enabled = false
 
 ### 端口占用或依赖缺失
 
-运行 `doctor`。确认没有其他 MediaMTX 实例占用 `1935` 或 `9997`。
+运行 `doctor`。确认没有其他 MediaMTX 实例占用 `1935`、`9997`，以及启用预览时使用的 `8888`。
+
+### 浏览器没有自动打开或预览无画面
+
+- 终端会始终输出 `file://.../runtime/preview.html`，自动打开失败时可手动访问；
+- 等待终端显示所有 RTMP publisher 已上线后再刷新页面；
+- 检查 `preview.hls_port` 是否被占用；
+- 如果 `preview.bind_host` 是 Mac 的局域网地址，确认该地址仍属于当前网络接口；
+- HLS 页面默认静音，声音需要在播放器中手动打开。
 
 ## 15. 安全说明
 
@@ -460,6 +515,7 @@ enabled = false
 - `enroll --accept-first-use` 是唯一的首次信任步骤；获取 Root CA 的请求不携带认证信息。
 - OpenGoPro 文档说明 COHN Root CA 有效期为一年，应安排到期前重新登记。
 - RTMP 本身未加密，只应在可信、隔离的采集局域网中使用。
+- HLS 默认只绑定 `127.0.0.1`。只有在确实需要其他局域网设备查看时才改为 Mac 的私有 IPv4，并配合防火墙限制访问；程序拒绝绑定 `0.0.0.0` 或公网地址。
 
 ## 16. 开发检查
 
@@ -487,3 +543,4 @@ enabled = false
 - [GoPro Labs Command Language](https://gopro.github.io/labs/control/tech/)
 - [GoPro Labs Release Notes](https://gopro.github.io/labs/control/notes/)
 - [OpenGoPro Camera on the Home Network](https://gopro.github.io/OpenGoPro/docs/ble/cohn/)
+- [MediaMTX 浏览器读取流](https://mediamtx.org/docs/read/web-browsers)

@@ -8,6 +8,7 @@ import json
 import math
 import sys
 import warnings
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -121,6 +122,20 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="仅录制指定 alias；可重复，省略则录制所有 enabled=true 相机",
     )
+    display = record.add_mutually_exclusive_group()
+    display.add_argument(
+        "--display",
+        dest="display",
+        action="store_true",
+        help="启用 HLS 多机实时预览并自动打开本机浏览器",
+    )
+    display.add_argument(
+        "--no-display",
+        dest="display",
+        action="store_false",
+        help="本次录制禁用配置文件中的实时预览",
+    )
+    record.set_defaults(display=None)
     return parser
 
 
@@ -425,6 +440,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.duration is not None and (not math.isfinite(args.duration) or args.duration < 1):
             raise ConfigError("--duration 必须是至少 1 秒的有限数值")
         selected = select_cameras(config, args.camera)
+        if args.display is not None:
+            preview = replace(selected.preview, enabled=args.display)
+            if args.display:
+                preview = replace(preview, auto_open=True)
+            selected = replace(selected, preview=preview)
         session = CaptureSession(selected, label=args.label)
         session_dir = session.run(duration=args.duration)
         print(f"\n采集完成：{session_dir}")

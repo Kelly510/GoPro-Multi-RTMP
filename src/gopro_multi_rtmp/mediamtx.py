@@ -15,7 +15,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Iterable
 
-from .config import CameraConfig, ServerConfig
+from .config import CameraConfig, PreviewConfig, ServerConfig
 
 
 class MediaMTXError(RuntimeError):
@@ -49,6 +49,7 @@ def render_mediamtx_config(
     api_port: int,
     cameras: Iterable[CameraConfig],
     server: ServerConfig,
+    preview: PreviewConfig,
 ) -> str:
     """Render a minimal, fixed-path MediaMTX configuration."""
     lines = [
@@ -58,21 +59,33 @@ def render_mediamtx_config(
         "rtmp: true",
         'rtmpEncryption: "no"',
         f"rtmpAddress: :{rtmp_port}",
-        "hls: false",
-        "webrtc: false",
-        "srt: false",
-        "moq: false",
-        "api: true",
-        f"apiAddress: 127.0.0.1:{api_port}",
-        "pathDefaults:",
-        f"  recordPath: {_yaml_string((session_dir / 'streams' / '%path' / '%Y-%m-%d_%H-%M-%S-%f').resolve())}",
-        "  recordFormat: fmp4",
-        f"  recordPartDuration: {server.record_part_duration}",
-        "  recordMaxPartSize: 50M",
-        f"  recordSegmentDuration: {server.record_segment_duration}",
-        "  recordDeleteAfter: 0s",
-        "paths:",
+        f"hls: {'true' if preview.enabled else 'false'}",
     ]
+    if preview.enabled:
+        lines.extend(
+            [
+                f"hlsAddress: {_yaml_string(f'{preview.bind_host}:{preview.hls_port}')}",
+                "hlsAlwaysRemux: true",
+                "hlsVariant: fmp4",
+            ]
+        )
+    lines.extend(
+        [
+            "webrtc: false",
+            "srt: false",
+            "moq: false",
+            "api: true",
+            f"apiAddress: 127.0.0.1:{api_port}",
+            "pathDefaults:",
+            f"  recordPath: {_yaml_string((session_dir / 'streams' / '%path' / '%Y-%m-%d_%H-%M-%S-%f').resolve())}",
+            "  recordFormat: fmp4",
+            f"  recordPartDuration: {server.record_part_duration}",
+            "  recordMaxPartSize: 50M",
+            f"  recordSegmentDuration: {server.record_segment_duration}",
+            "  recordDeleteAfter: 0s",
+            "paths:",
+        ]
+    )
     for camera in cameras:
         lines.extend(
             [
@@ -96,6 +109,7 @@ class MediaMTXRunner:
         api_port: int,
         cameras: tuple[CameraConfig, ...],
         server: ServerConfig,
+        preview: PreviewConfig,
     ) -> None:
         self.binary = binary
         self.session_dir = session_dir
@@ -103,6 +117,7 @@ class MediaMTXRunner:
         self.api_port = api_port
         self.cameras = cameras
         self.server = server
+        self.preview = preview
         self.process: subprocess.Popen[str] | None = None
         self._log_handle: Any = None
         self.config_path = session_dir / "runtime" / "mediamtx.yml"
@@ -116,6 +131,7 @@ class MediaMTXRunner:
                 self.api_port,
                 self.cameras,
                 self.server,
+                self.preview,
             ),
             encoding="utf-8",
         )
@@ -136,10 +152,21 @@ class MediaMTXRunner:
                     raise MediaMTXError(
                         f"MediaMTX 启动失败，退出码 {self.process.returncode}；查看 {log_path}"
                     )
-                if self._tcp_open("127.0.0.1", self.rtmp_port) and self._api_alive():
+                preview_ready = (
+                    not self.preview.enabled
+                    or self._tcp_open(self.preview.bind_host, self.preview.hls_port)
+                )
+                if (
+                    self._tcp_open("127.0.0.1", self.rtmp_port)
+                    and self._api_alive()
+                    and preview_ready
+                ):
                     return
                 time.sleep(0.1)
-            raise MediaMTXError(f"MediaMTX 未在 {timeout:.0f} 秒内监听 RTMP/API 端口")
+            expected = "RTMP/API/HLS" if self.preview.enabled else "RTMP/API"
+            raise MediaMTXError(
+                f"MediaMTX 未在 {timeout:.0f} 秒内监听 {expected} 端口"
+            )
         except BaseException:
             # start() owns partial resources until readiness, including Ctrl+C.
             self.stop(timeout=3.0)

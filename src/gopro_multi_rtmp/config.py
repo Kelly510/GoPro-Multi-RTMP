@@ -58,6 +58,14 @@ class ServerConfig:
 
 
 @dataclass(frozen=True)
+class PreviewConfig:
+    enabled: bool
+    bind_host: str
+    hls_port: int
+    auto_open: bool
+
+
+@dataclass(frozen=True)
 class TimeoutConfig:
     cohn_request_seconds: float
     publisher_ready_seconds: float
@@ -70,6 +78,7 @@ class AppConfig:
     network: NetworkConfig
     stream: StreamConfig
     server: ServerConfig
+    preview: PreviewConfig
     timeouts: TimeoutConfig
     cameras: tuple[CameraConfig, ...]
 
@@ -78,7 +87,15 @@ _SAFE_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 _DURATION = re.compile(r"^[1-9][0-9]*(ms|s|m|h)$")
 _PLACEHOLDERS = ("CHANGE_ME", "YOUR_")
 _CONFIG_SCHEMA_VERSION = 2
-_TOP_LEVEL_KEYS = {"schema_version", "network", "stream", "server", "timeouts", "cameras"}
+_TOP_LEVEL_KEYS = {
+    "schema_version",
+    "network",
+    "stream",
+    "server",
+    "preview",
+    "timeouts",
+    "cameras",
+}
 _NETWORK_KEYS = {"rtmp_host", "rtmp_port"}
 _STREAM_KEYS = {"resolution", "encode_to_sd", "require_audio"}
 _SERVER_KEYS = {
@@ -89,6 +106,7 @@ _SERVER_KEYS = {
     "record_segment_duration",
     "sha256",
 }
+_PREVIEW_KEYS = {"enabled", "bind_host", "hls_port", "auto_open"}
 _TIMEOUT_KEYS = {"cohn_request_seconds", "publisher_ready_seconds", "shutdown_seconds"}
 _CAMERA_KEYS = {
     "alias",
@@ -181,10 +199,14 @@ def load_config(path: str | Path) -> AppConfig:
     network_data = _section(data, "network")
     stream_data = _section(data, "stream")
     server_data = _section(data, "server")
+    preview_data = data.get("preview", {})
+    if not isinstance(preview_data, dict):
+        raise ConfigError("[preview] 必须是 TOML 表")
     timeout_data = _section(data, "timeouts")
     _reject_unknown_keys(network_data, _NETWORK_KEYS, "[network]")
     _reject_unknown_keys(stream_data, _STREAM_KEYS, "[stream]")
     _reject_unknown_keys(server_data, _SERVER_KEYS, "[server]")
+    _reject_unknown_keys(preview_data, _PREVIEW_KEYS, "[preview]")
     _reject_unknown_keys(timeout_data, _TIMEOUT_KEYS, "[timeouts]")
 
     network = NetworkConfig(
@@ -206,6 +228,12 @@ def load_config(path: str | Path) -> AppConfig:
         record_part_duration=str(server_data.get("record_part_duration", "1s")),
         record_segment_duration=str(server_data.get("record_segment_duration", "1h")),
         sha256=_bool(server_data, "sha256", False),
+    )
+    preview = PreviewConfig(
+        enabled=_bool(preview_data, "enabled", False),
+        bind_host=str(preview_data.get("bind_host", "127.0.0.1")).strip(),
+        hls_port=_int(preview_data, "hls_port", 8888),
+        auto_open=_bool(preview_data, "auto_open", True),
     )
     timeouts = TimeoutConfig(
         cohn_request_seconds=_float(timeout_data, "cohn_request_seconds", 5.0),
@@ -245,6 +273,7 @@ def load_config(path: str | Path) -> AppConfig:
         network=network,
         stream=stream,
         server=server,
+        preview=preview,
         timeouts=timeouts,
         cameras=tuple(cameras),
     )
@@ -260,6 +289,29 @@ def validate_config(config: AppConfig, *, hardware: bool) -> None:
         raise ConfigError("server.api_port 超出有效范围")
     if config.network.rtmp_port == config.server.api_port:
         raise ConfigError("RTMP 端口与 MediaMTX API 端口不能相同")
+    if not 1 <= config.preview.hls_port <= 65535:
+        raise ConfigError("preview.hls_port 超出有效范围")
+    try:
+        preview_address = ipaddress.ip_address(config.preview.bind_host)
+    except ValueError as exc:
+        raise ConfigError("preview.bind_host 必须是 IPv4 地址") from exc
+    if not isinstance(preview_address, ipaddress.IPv4Address):
+        raise ConfigError("preview.bind_host 必须是 IPv4 地址")
+    if (
+        preview_address.is_unspecified
+        or preview_address.is_multicast
+        or preview_address.is_reserved
+    ) or not (
+        preview_address.is_loopback
+        or preview_address.is_private
+        or preview_address.is_link_local
+    ):
+        raise ConfigError("preview.bind_host 必须是回环、私有或 link-local IPv4")
+    if config.preview.enabled and config.preview.hls_port in {
+        config.network.rtmp_port,
+        config.server.api_port,
+    }:
+        raise ConfigError("HLS 预览端口不能与 RTMP 或 MediaMTX API 端口相同")
     if config.stream.resolution not in {480, 720, 1080}:
         raise ConfigError("stream.resolution 只能是 480、720 或 1080")
     if not _DURATION.fullmatch(config.server.record_part_duration):
@@ -404,6 +456,13 @@ def public_config(config: AppConfig, resolved_host: str) -> dict[str, Any]:
             "resolution": config.stream.resolution,
             "encode_to_sd": config.stream.encode_to_sd,
             "require_audio": config.stream.require_audio,
+        },
+        "preview": {
+            "enabled": config.preview.enabled,
+            "protocol": "hls",
+            "bind_host": config.preview.bind_host,
+            "hls_port": config.preview.hls_port,
+            "auto_open": config.preview.auto_open,
         },
         "cameras": [
             {

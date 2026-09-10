@@ -17,6 +17,7 @@ from .config import AppConfig, CameraConfig, public_config, resolve_rtmp_host, v
 from .labs_cohn import LabsCohnClient
 from .manifest import Manifest
 from .mediamtx import MediaMTXError, MediaMTXRunner, find_mediamtx, inspect_recordings
+from .preview import hls_url, open_preview_dashboard, write_preview_dashboard
 
 
 class CaptureError(RuntimeError):
@@ -104,6 +105,7 @@ class CaptureSession:
             config.server.api_port,
             config.cameras,
             config.server,
+            config.preview,
         )
         self.runtimes = tuple(
             CameraRuntime(
@@ -371,6 +373,37 @@ class CaptureSession:
             )
             thread.start()
             self._keepalive_threads.append(thread)
+
+    def _start_preview(self) -> None:
+        """Create and optionally open the HLS dashboard after all paths are online."""
+        if not self.config.preview.enabled:
+            return
+        dashboard = write_preview_dashboard(
+            self.session_dir,
+            self.config.cameras,
+            self.config.preview,
+        )
+        urls = {
+            camera.alias: hls_url(self.config.preview, camera)
+            for camera in self.config.cameras
+        }
+        opened = False
+        if self.config.preview.auto_open:
+            opened = open_preview_dashboard(dashboard)
+        self._event(
+            "system",
+            "preview_ready",
+            dashboard=str(dashboard.relative_to(self.session_dir)),
+            hls_urls=urls,
+            browser_opened=opened,
+        )
+        print(f"实时预览页面：{dashboard.resolve().as_uri()}", flush=True)
+        if self.config.preview.auto_open and not opened:
+            self._event(
+                "system",
+                "preview_open_warning",
+                message="无法自动打开浏览器，请手动打开上面的实时预览页面",
+            )
 
     def _stop_keepalive(self) -> None:
         self._keepalive_stop.set()
@@ -696,6 +729,7 @@ class CaptureSession:
                 sd_backup_requested=self.config.stream.encode_to_sd,
                 audio_required=self.config.stream.require_audio,
             )
+            self._start_preview()
             print(
                 f"{len(self.runtimes)} 路 RTMP 已上线；命令分发跨度 {command_span_ms:.3f} ms，"
                 f"HTTP 完成跨度 {command_ack_span_ms:.3f} ms，"
