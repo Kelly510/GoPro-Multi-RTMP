@@ -230,7 +230,7 @@ def load_config(path: str | Path) -> AppConfig:
         sha256=_bool(server_data, "sha256", False),
     )
     preview = PreviewConfig(
-        enabled=_bool(preview_data, "enabled", False),
+        enabled=_bool(preview_data, "enabled", True),
         bind_host=str(preview_data.get("bind_host", "127.0.0.1")).strip(),
         hls_port=_int(preview_data, "hls_port", 8888),
         auto_open=_bool(preview_data, "auto_open", True),

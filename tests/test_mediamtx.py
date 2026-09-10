@@ -37,7 +37,8 @@ class MediaMTXTests(unittest.TestCase):
         self.assertIn("streams/%path", text)
         self.assertIn("recordFormat: fmp4", text)
         self.assertIn("moq: false", text)
-        self.assertIn("hls: false", text)
+        self.assertIn("hls: true", text)
+        self.assertIn("hlsVariant: fmp4", text)
 
     def test_enables_loopback_hls_without_disabling_recording(self) -> None:
         config_path = self.root / "preview.toml"

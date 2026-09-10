@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gopro-multi-rtmp"
-version = "1.1.0"
+version = "1.1.1"
 description = "Labs+COHN multi-camera GoPro HERO13 RTMP capture, live preview, and SD backup"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"

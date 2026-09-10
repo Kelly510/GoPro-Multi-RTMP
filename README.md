@@ -2,7 +2,7 @@
 
 这个项目用于在同一局域网中控制任意数量的 GoPro HERO13 Black：相机通过 GoPro Labs 和 COHN 接收控制命令，将 RTMP 视频流发送到 Mac 上的 MediaMTX，可同时显示多机实时画面、在 Mac 上录制，并在各自的 SD 卡保存副本。
 
-日常录制时，相机只需保持开机、已经连接采集 Wi-Fi，并停留在普通预览界面。主机可以一条命令同时启动或停止所选相机，不需要再次进入“等待配对”界面。
+日常录制时，相机只需保持开机、已经连接采集 Wi-Fi，并停留在普通预览界面。主机可以一条命令同时启动或停止所选相机，不需要再次进入“等待配对”界面。需要无人值守供电时，也可以按本文的无电池电源流程设置通电唤醒。
 
 同步指标分为两层：
 
@@ -117,6 +117,12 @@ $ADDR=15$SHPS=15
 
 COHN 初始化后会在后续开机时恢复，无需每次重新扫描。它不能从彻底关机或已经完全休眠的相机中凭空唤醒控制服务，因此日常采集仍要求相机保持开机并已入网。
 
+### 4.4 可选：无电池通电自动开机
+
+HERO13 可以用永久 Labs 命令 `*WAKE=2` 设置为接入 USB 电源时自动开机。不要把“拔电后自动安全关机”和“无电池直接断电”混为一件事：GoPro 官方 USB Power Trigger 明确要求安装电池，才能在 USB 电源消失后继续结束录制并关闭文件。
+
+本项目的无电池方案采用两阶段关机：先由 `record` 停止所有相机、等待 RTMP 下线并完成本机和 SD 文件封装；命令成功退出后，再由智能插座、继电器或 PDU 切断 USB 总电源。完整设置、验证步骤和自动化顺序见 [无电池供电自动化](docs/power-automation.md)。
+
 ## 5. 安装主机程序
 
 支持 Python 3.11、3.12 和 3.13。
@@ -146,7 +152,7 @@ chmod 600 config.toml
 ```
 
 当前配置格式为 `schema_version = 2`。程序会拒绝未知字段，避免拼写错误被静默忽略。
-`[preview]` 是可选配置段，旧配置不添加它也能继续使用，且默认不启动浏览器预览。
+`[preview]` 是可选配置段；省略时也会默认启动仅限本机访问的浏览器预览。
 
 完整示例：
 
@@ -172,7 +178,7 @@ record_segment_duration = "1h"
 sha256 = false
 
 [preview]
-enabled = false              # true 时每次录制都启用浏览器多机预览
+enabled = true               # 默认启用浏览器多机预览
 bind_host = "127.0.0.1"      # 默认只允许本机浏览器访问
 hls_port = 8888
 auto_open = true             # 自动打开生成的多机预览页面
@@ -207,7 +213,7 @@ cohn_password = "另一台相机生成的 COHN 密码"
 - `encode_to_sd`：为 `true` 时，启动命令要求相机同步保存 SD 副本。
 - `require_audio`：为 `true` 时，本机文件没有音频轨会使会话失败；程序不会判断音频内容是否静音。
 - `sha256`：为 `true` 时，为本机录制文件计算 SHA-256。
-- `preview.enabled`：启用 MediaMTX fMP4 HLS，并生成多机预览页面；默认关闭。
+- `preview.enabled`：启用 MediaMTX fMP4 HLS，并生成多机预览页面；默认为 `true`。
 - `preview.bind_host`：HLS 监听地址；默认 `127.0.0.1`，不会向局域网开放。需要在其他设备查看时，显式填写 Mac 的私有局域网 IPv4。
 - `preview.hls_port`：HLS 预览端口，不能与 RTMP/API 端口相同。
 - `preview.auto_open`：发布流全部上线后，是否自动用默认浏览器打开预览页面。
@@ -353,17 +359,17 @@ Labs 没有定义 JOIN 字符串中冒号、双引号和控制字符的转义规
 
 ### 实时预览并录制
 
-不修改配置文件，临时启用本机浏览器多机预览：
+预览默认开启，正常执行录制命令即可同时打开本机浏览器多机页面：
 
 ```bash
 .venv/bin/gopro-multi-rtmp --config config.toml record \
   --camera cam_a --camera cam_b \
-  --duration 30 --label stereo --display
+  --duration 30 --label stereo
 ```
 
 所有 RTMP publisher 上线后，程序会生成并打开一个响应式多机页面。页面默认静音，MediaMTX 同时继续把每路流写入本机 MP4；`encode_to_sd = true` 时相机也继续保存 SD 副本。预览客户端不会从 GoPro 获取第二路流。
 
-如果 `[preview] enabled = true`，普通 `record` 命令也会启用预览。需要对某次录制临时关闭时使用：
+如果配置中显式设置了 `enabled = false`，可以用 `--display` 为某次录制临时开启。需要临时关闭默认预览时使用：
 
 ```bash
 .venv/bin/gopro-multi-rtmp --config config.toml record --no-display
@@ -539,6 +545,7 @@ enabled = false
 - [GoPro Labs 固件](https://gopro.github.io/labs/)
 - [GoPro Labs 固件安装说明](https://gopro.github.io/labs/install/)
 - [GoPro Labs Live-Stream Setup](https://gopro.github.io/labs/control/rtmp/)
+- [GoPro Labs USB Power Trigger](https://gopro.github.io/labs/control/usb/)
 - [GoPro Labs Action Commands](https://gopro.github.io/labs/control/actions/)
 - [GoPro Labs Command Language](https://gopro.github.io/labs/control/tech/)
 - [GoPro Labs Release Notes](https://gopro.github.io/labs/control/notes/)

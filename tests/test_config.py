@@ -78,9 +78,9 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn("cohn_password", rendered)
         self.assertNotIn("cohn-secret-a", repr(config.cameras[0]))
 
-    def test_preview_defaults_off_and_is_safe_for_local_use(self) -> None:
+    def test_preview_defaults_on_and_is_safe_for_local_use(self) -> None:
         config = load_config(self.write_config(VALID))
-        self.assertFalse(config.preview.enabled)
+        self.assertTrue(config.preview.enabled)
         self.assertEqual(config.preview.bind_host, "127.0.0.1")
         self.assertEqual(config.preview.hls_port, 8888)
         self.assertTrue(config.preview.auto_open)
